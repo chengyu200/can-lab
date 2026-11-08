@@ -35,6 +35,41 @@ ip link set vxcan0 up && ip link set vxcan1 up
 
 `vcan0` 的 MTU 是 72 而不是 16，说明这是支持 CAN FD 的 vcan。
 
+### 内核模块总表（本机实测，kernel 6.6.0-145）
+
+模块加载不用手写 `modprobe`：内核按 `alias` 自动匹配。`socket(PF_CAN, SOCK_RAW, CAN_RAW)`
+会拉 `can_raw`，`ip link add type vcan` 会拉 `vcan`。只有手工放进 `extra/` 的
+`can-isotp` / `can-j1939` / `vxcan` 需要显式 `modprobe`（`depmod -a` 之后同样能自动加载）。
+
+| 模块 | alias（自动加载依据） | 作用 | 本实验用在哪 |
+|---|---|---|---|
+| `can` | `net-pf-29` | PF_CAN 协议族核心：socket 注册、设备列表、`can_send` / `can_rx_register`、向所有协议广播 netdev up/down | 全部阶段（`lsmod` 里 refcount=4） |
+| `can_raw` | `can-proto-1` | `SOCK_RAW` 实现：`CAN_RAW_FILTER` 内核侧过滤、`LOOPBACK`/`RECV_OWN_MSGS` 回环开关、`ERR_FILTER`、`FD_FRAMES` | 阶段 1–4、8 |
+| `can_bcm` | `can-proto-2` | Broadcast Manager：`TX_SETUP` 用内核定时器周期发送，`RX_SETUP`+`RX_TIMEOUT` 在内核侧判超时 | 阶段 4 |
+| `can_isotp` | `can-proto-6` | ISO 15765-2 传输层：分段/重组、FC/BS/STmin、N_BS/N_CR 超时 | 阶段 5、6（与手写栈对照） |
+| `can_j1939` | `can-proto-7` | SAE J1939：29 位 ID 解码、地址声明与 NAME 仲裁、TP（BAM 与 RTS/CTS） | 阶段 7、8 |
+| `vcan` | `rtnl-link-vcan` | 纯软件回环网卡，支持 FD（MTU 72），无时序保证 | 阶段 0–6 的 `vcan0` |
+| `vxcan` | `rtnl-link-vxcan` | 一对接口当一段双绞线两端：跨端转发 + 本端回环，可单独 down 一端 | 阶段 8（两对） |
+| `can-dev` | `rtnl-link-can` | CAN 设备公共层：bittiming 计算、bus-off restart、echo skb | 间接，被 vcan/vxcan 依赖 |
+| `can-gw` | `can-gw` | `cangw` 的内核 netlink 网关：跨接口转发、改 ID、对 payload 做 and/or/xor | **未用**（原因见下） |
+| `c_can` / `slcan` | — | 真实控制器 / 串口转 CAN 驱动 | 未用，接真硬件时替换 vcan |
+
+三条边界，比记住模块名更重要：
+
+- **该下沉内核模块的**：与业务语义无关、要求不依赖进程存活、要求确定时序 —— 周期发送
+  （BCM）、超时监控（BCM `RX_TIMEOUT`）、分段重组（ISO-TP）、地址仲裁（J1939）。
+  进程被 `SIGSTOP` 冻住或直接崩掉，这些事照样进行（见阶段 4）。
+- **必须留用户态的**：信号解码、状态机、量纲换算、跨总线语义映射。阶段 8 的量纲陷阱
+  证明了字节级转发必然出错，`can-gw` 同样只能搬字节。
+- **`can-gw` 为什么没用**：`cangw` 能改 ID、对 payload 做位运算，但改不了 `factor`。
+  0x180 的 ×0.25 和 EEC1 的 ×0.125 之间要除以 2，只能用户态算。纯透传/改 ID 的轻量桥接
+  用它会更省（零拷贝、不需要常驻进程），需要换算就得上 `gw.c`。
+
+放到容器里跑的话：CAN 也是 netdev，`ip link set can0 netns <pid>` 可以直接移入容器
+netns；但**模块加载只在 init netns 里发生一次**，容器内的 `socket()` 不会因为缺模块而去
+自动加载。所以正确做法是宿主先 `modprobe` 好协议模块，容器只给 `CAP_NET_RAW` 并移入
+netns —— 别指望在容器里把 `can_isotp` 拉起来。
+
 ## 构建
 
 ```sh
