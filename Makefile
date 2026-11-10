@@ -8,6 +8,11 @@ CC      ?= gcc
 CFLAGS  ?= -O2 -g -Wall -Wextra -std=gnu11 -Iinclude
 LDLIBS  ?= -lm
 
+# 阶段 9 是 C++（模拟你们真实的 tcp_server 技术栈）
+CXX      ?= g++
+CXXFLAGS ?= -O2 -g -Wall -Wextra -std=c++17 -I09-bridge
+CXLIBS   ?= -pthread
+
 BINS := 01-hello/can_hello \
         02-router/can_router \
         03-app/ecu_engine \
@@ -28,8 +33,15 @@ BINS := 01-hello/can_hello \
 PROTO  := proto.o
 ISOTP  := 05-isotp/isotp_user.o
 UDS    := 06-uds/uds.o
+BRIDGE := 09-bridge/can_bridge.o
+# ISO-TP 后端：直接复用阶段 5 的 05-isotp/isotp_user.c（C 源码，一行没改），
+# 所以链接时要把 $(ISOTP) 一起带上，编译时用 -Iinclude 找 isotp_user.h。
+BRIDGE_ISOTP := 09-bridge/can_bridge_isotp.o
 
-all: $(BINS)
+CXXBINS := 09-bridge/tcp_server \
+           09-bridge/client
+
+all: $(BINS) $(CXXBINS)
 
 $(PROTO): proto.c include/can_proto.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -88,7 +100,21 @@ $(UDS): 06-uds/uds.c include/uds.h
 08-gateway/gw: 08-gateway/gw.c $(PROTO) include/can_proto.h
 	$(CC) $(CFLAGS) -o $@ $< $(PROTO) $(LDLIBS)
 
+$(BRIDGE): 09-bridge/can_bridge.cpp 09-bridge/can_bridge.h 09-bridge/common.h
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BRIDGE_ISOTP): 09-bridge/can_bridge_isotp.cpp 09-bridge/can_bridge_isotp.h \
+                 09-bridge/can_bridge.h 09-bridge/common.h include/isotp_user.h
+	$(CXX) $(CXXFLAGS) -Iinclude -c -o $@ $<
+
+09-bridge/tcp_server: 09-bridge/tcp_server.cpp $(BRIDGE) $(BRIDGE_ISOTP) $(ISOTP) \
+                      09-bridge/can_bridge.h 09-bridge/common.h
+	$(CXX) $(CXXFLAGS) -Iinclude -o $@ $< $(BRIDGE) $(BRIDGE_ISOTP) $(ISOTP) $(CXLIBS)
+
+09-bridge/client: 09-bridge/client.cpp 09-bridge/common.h
+	$(CXX) $(CXXFLAGS) -o $@ $< $(CXLIBS)
+
 clean:
-	rm -f $(BINS) $(PROTO) $(ISOTP) $(UDS)
+	rm -f $(BINS) $(CXXBINS) $(PROTO) $(ISOTP) $(UDS) $(BRIDGE) $(BRIDGE_ISOTP)
 
 .PHONY: all clean

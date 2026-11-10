@@ -1,0 +1,45 @@
+21:39:39.360 M1/srv    [ISOTP] 通道就绪 M1 ⇄ M2  tx=0x612 rx=0x621
+21:39:39.360 M1/srv    [ISOTP] 就绪 cb0 machine=1，对端 1 个
+21:39:39.360 M1/srv    [SRV] listening :7711
+21:39:39.360 M2/srv    [ISOTP] 通道就绪 M2 ⇄ M1  tx=0x621 rx=0x612
+21:39:39.360 M2/srv    [ISOTP] 就绪 cb1 machine=2，对端 1 个
+21:39:39.360 M2/srv    [SRV] listening :7712
+21:39:40.169 ----- 起 client：A、B 连 M1，C 连 M2 -----
+21:39:40.180 M1/srv    [SRV] A 注册成功 id=1 (127.0.0.1)
+21:39:40.179 ----- 步骤 1/2：hello-from-A（15 字节 → FF+2×CF）与 300 字节大消息（303 字节 → FF+43×CF） -----
+21:39:40.180 M1/srv    [SRV] B 注册成功 id=2 (127.0.0.1)
+21:39:40.180 B         已注册 OK 2
+21:39:40.180 A         已注册 OK 1
+21:39:40.180 B         收到 [M1/A] *** A 上线了
+21:39:40.180 A         收到 [M1/B] *** B 上线了
+21:39:40.180 M2/srv    [SRV] C 注册成功 id=1 (127.0.0.1)
+21:39:40.181 C         已注册 OK 1
+21:39:40.181 A         收到 [M2/C] *** C 上线了
+21:39:40.181 B         收到 [M2/C] *** C 上线了
+21:39:40.676 A         发送 hello-from-A
+21:39:40.721 B         收到 [M1/A] hello-from-A
+21:39:40.722 C         收到 [M1/A] hello-from-A
+21:39:41.787 C         发送 pong-from-C
+21:39:41.836 A         收到 [M2/C] pong-from-C
+21:39:41.836 B         收到 [M2/C] pong-from-C
+21:39:42.380 B         发送 hi
+21:39:42.428 A         收到 [M1/B] hi
+21:39:42.429 C         收到 [M1/B] hi
+21:39:43.083 A         发送 BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB…(共 300 字节)
+21:39:43.084 B         收到 [M1/A] BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB…(共 307 字节)
+21:39:43.086 C         收到 [M1/A] BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB…(共 307 字节)
+21:39:43.690 ----- 步骤 3：cb1 拉 down（模拟对端掉电），0.7 秒后 A 发 while-link-down —— 这条注定丢 -----
+21:39:43.697 M2/srv    [ISOTP] 接口暂不可用 errno=100 (Network is down)，等待恢复（socket 保留）
+21:39:46.387 A         发送 while-link-down
+21:39:46.387 B         收到 [M1/A] while-link-down
+21:39:46.404 ----- 步骤 4：cb1 恢复 up，A 再发 after-recover-A —— 验证断链后自愈 -----
+21:39:47.397 M1/srv    [ISOTP] M2 发送失败 errno=110 (Connection timed out)，本条消息放弃
+21:39:48.793 A         发送 after-recover-A
+21:39:48.794 B         收到 [M1/A] after-recover-A
+21:39:48.794 C         收到 [M1/A] after-recover-A
+21:39:49.631 ----- 收尾：SIGTERM 两个 server，打印退出统计 -----
+21:39:49.764 M1/srv    [CAN] 统计：发 6 条/54 帧，收 2 条；错误 发送1 回环0 孤片0 错序0 超时1
+21:39:49.766 B         连接已断开
+21:39:49.766 A         连接已断开
+21:39:49.811 M2/srv    [CAN] 统计：发 2 条/4 帧，收 6 条；错误 发送0 回环0 孤片0 错序0 超时0
+21:39:49.813 C         连接已断开
