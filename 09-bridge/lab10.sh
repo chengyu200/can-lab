@@ -48,10 +48,10 @@ echo "后端: ISO-TP（阶段 5 用户态实现），M1→M2=0x612  M2→M1=0x62
 candump -td "$IF_A",600:700 "$IF_B",600:700 >"$CANLOG" 2>&1 &
 PIDS+=($!)
 
-"$CD/tcp_server" "$PORT_A" 1 "$IF_A" --isotp --peers 2 >>"$LOG" 2>&1 &
+"${SRV_BIN:-$CD/tcp_server}" "$PORT_A" 1 "$IF_A" --isotp --peers 2 >>"$LOG" 2>&1 &
 SRV+=($!)
 PIDS+=($!)
-"$CD/tcp_server" "$PORT_B" 2 "$IF_B" --isotp --peers 1 >>"$LOG" 2>&1 &
+"${SRV_BIN:-$CD/tcp_server}" "$PORT_B" 2 "$IF_B" --isotp --peers 1 >>"$LOG" 2>&1 &
 SRV+=($!)
 PIDS+=($!)
 sleep 0.8

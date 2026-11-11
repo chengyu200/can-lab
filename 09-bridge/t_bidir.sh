@@ -31,8 +31,8 @@ ip link set "$IF_B" mtu 16 up
 B1=$(printf 'A%.0s' $(seq 1 300))
 B2=$(printf 'C%.0s' $(seq 1 300))
 
-"$CD/tcp_server" 7721 1 "$IF_A" --isotp --peers 2 >"$LOG" 2>&1 & S1=$!
-"$CD/tcp_server" 7722 2 "$IF_B" --isotp --peers 1 >>"$LOG" 2>&1 & S2=$!
+"${SRV_BIN:-$CD/tcp_server}" 7721 1 "$IF_A" --isotp --peers 2 >"$LOG" 2>&1 & S1=$!
+"${SRV_BIN:-$CD/tcp_server}" 7722 2 "$IF_B" --isotp --peers 1 >>"$LOG" 2>&1 & S2=$!
 sleep 0.8
 
 # 两条消息只差 20ms：第一台的 CF 还在飞，第二台就开始发 FF，真正撞在一起

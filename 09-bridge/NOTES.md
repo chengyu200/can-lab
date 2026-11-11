@@ -418,3 +418,113 @@ ISO-TP 后端不是这样。实测：
    让该对端队列卡顿 1 秒。
 4. **`ISOTP_MAX_MSG=4096` 是阶段 5 定的**，真按 4095 上限收会差一个字节的边界，
    桥接这边用 4093（减去 3 字节头）避开了。
+
+---
+
+## 9. 把 tcp_server 包成类之后，两个对象怎么接（v2/）
+
+`09-bridge/tcp_server.cpp` 是**给人看改哪几行**的：全局变量 + 静态函数，
+一眼就能数出 `[BRIDGE-1..4]` 四个改动点。但真实工程里 `tcp_server` 是个类，
+没有全局变量可用，也不能在类里 include 桥接的头文件。所以另写了一版：
+
+```
+09-bridge/v2/server.h      class TcpServer（业务全在这）
+09-bridge/v2/server.cpp
+09-bridge/v2/main.cpp      只做三件事：造对象、接线、按顺序关停
+```
+
+```sh
+# 同一套脚本，换个二进制就能跑类化版，输出逐行可比
+SRV_BIN=$PWD/09-bridge/v2/tcp_server ./09-bridge/lab10.sh
+```
+
+### 9.1 所有权：谁都不拥有谁
+
+```
+        main
+       /    \
+ TcpServer   IBridge(CanBridge 或 IsotpBridge)
+```
+
+`main` 用两个栈/unique_ptr 对象持有它们，**两者之间没有任何指针**。
+它们互相只认 `std::function`：
+
+| 方向 | 谁设 | 谁调 | 在哪个线程调 | 能否阻塞 |
+|---|---|---|---|---|
+| 本地 → CAN | `server.set_can_sink(...)` → 里面包 `bridge->forward_local()` | server | 该 client 的读线程 | 短暂（只入队，不碰 socket） |
+| CAN → 本地 | `bridge->set_handler(...)` → 里面包 `server.from_can()` | bridge | 桥接的 rx 线程（ISO-TP 版每对端一个） | 会短暂持 server 的锁 |
+
+不互相持有带来三个好处：没有循环引用、不用前向声明对方的头文件、
+换桥接实现（J1939 / 共享内存 / 另一个进程）时 `server.cpp` 一行不改。
+
+### 9.2 四条纪律（类化版比 flat 版更容易踩）
+
+1. **绝不持 `mu_` 做 socket 写**。`broadcast_local()` 只在锁里拷一份 client
+   列表，出锁再逐个写。flat 版是持锁 `send_msg` 的 —— 一个卡住的客户端会让
+   整个 server 连 accept 都进不来。
+2. **绝不持 `mu_` 调 `can_sink_`**。桥接可能阻塞（ISO-TP 等 FC 最长 1 秒），
+   持锁调用等于把整个 server 押给一条坏链路。
+3. **`from_can()` 里绝不回调 `can_sink_`**。防环的第二道闸，和 flat 版同理。
+4. **每个 client 一把写锁**（`Client::wmu`）。同一个 fd 可能被两个线程写：
+   它自己的读线程在广播，桥接的 rx 线程在投递。不加锁会写出半个长度头。
+
+### 9.3 关停顺序：先断回调来源
+
+```cpp
+server.serve();          // 阻塞
+if (bridge) bridge->stop();   // ① 先 join 掉桥接的 tx/rx 线程
+server.stop();                // ② 再拆 server
+```
+
+反过来的话，`server.stop()` 已经开始析构成员，桥接的 rx 线程还能调
+`from_can()` 去摸已经销毁的 mutex —— 典型症状是「十次里有一次退出时崩溃」。
+
+`bridge->stop()` 可能要等 1 秒（ISO-TP 的 tx 线程卡在等 FC），
+这段时间 server 还完整活着，回调进来是安全的。**先停谁，取决于谁在调谁。**
+
+### 9.4 实测踩到的坑：把运行标志当幂等标志用
+
+第一版 `stop()` 写成：
+
+```cpp
+void TcpServer::stop() {
+    if (!run_.exchange(false)) return;   // ← 错
+    ... 关监听、shutdown client、join 所有连接线程
+}
+```
+
+信号处理函数里调了 `request_stop()`（把 `run_` 置 false），
+等 `main` 再调 `stop()` 时 `run_` 已经是 false，于是**直接返回**：
+监听 fd 没关、连接线程一个都没 join。进程退出时 `std::vector<std::thread>`
+析构，里面还有 joinable 的线程 → `terminate called without an active exception`。
+
+修复是把两件事分开：
+
+```cpp
+std::atomic<bool> run_{false};      // serve() 的循环条件
+std::atomic<bool> stopped_{false};  // stop() 的幂等标志
+
+void TcpServer::stop() {
+    if (stopped_.exchange(true)) return;   // 只有这里判幂等
+    run_.store(false);
+    ...
+}
+```
+
+教训很具体：**「该不该继续跑」和「清理做过没有」是两个状态**，
+用同一个原子变量表示，就会在「信号先到、stop 后到」这种时序下丢清理。
+而且它只在退出路径上出问题，正常收发全程无感 —— 这种 bug 只能靠
+「跑完看退出码 / 盯着 stderr」抓，功能测试抓不到。
+
+### 9.5 统计口径：交给桥接 ≠ 发出去
+
+退出时两行统计是分开的，别混着看：
+
+```
+M1/srv [SRV] 统计：client 0 个，本地→CAN 5 条（拒收 0），CAN→本地 2 条
+M1/srv [CAN] 统计：发 6 条/54 帧，收 2 条；错误 发送1 回环0 孤片0 错序0 超时1
+```
+
+`本地→CAN 5 条` 是 server 把 5 条交给了桥接；`发 6 条` 里有 1 条是上线通知
+（kJoin）走的是同一条路；`错误 发送1` 是断链那条在桥接内部失败了。
+server 根本不知道那条丢了 —— 这正是「出方向是单向的」的直接体现。

@@ -123,6 +123,9 @@ include/j1939_util.h     阶段 7：29 位 ID 与 64 位 NAME 的拆解
 09-bridge/lab9.sh        阶段 9：两台「机器」+ 一条 CAN 线，一键跑完（自研分片）
 09-bridge/lab10.sh       阶段 9：同一套 server 换成 ISO-TP 分片再跑一遍
 09-bridge/t_bidir.sh     阶段 9：双向同时发 300 字节（验两个 socket 的设计）
+09-bridge/v2/server.h   阶段 9：把 tcp_server 包成 class TcpServer（类化版）
+09-bridge/v2/server.cpp
+09-bridge/v2/main.cpp   阶段 9：只做造对象、双向接线、按顺序关停
 09-bridge/NOTES.md       阶段 9：改哪里、加什么、三个必须做对的地方
 ```
 
@@ -714,6 +717,26 @@ ISO-TP 接到桥接里 —— 同一个 `tcp_server`，加两个参数就换后�
 断链时的差别也很直观：自研后端 `send()` 立刻返回 `ENETDOWN`；ISO-TP 是
 「首帧写进去了、对端没回 FC」，要等满 `N_BS=1s` 才 `ETIMEDOUT` ——
 这正是 UDS 必须有 P2 超时的原因。对比表和已知限制见 `09-bridge/NOTES.md` 第 8 节。
+
+### 类化版：tcp_server 是个类的时候怎么接（v2/）
+
+`tcp_server.cpp` 是 flat 版（全局变量 + 静态函数），好处是能一眼数出改哪 4 行。
+真实工程里 server 是个类，所以另写了一版：业务全在 `class TcpServer` 里，
+`main.cpp` 只剩「造对象 / 接线 / 按顺序关停」。
+
+```sh
+SRV_BIN=$PWD/09-bridge/v2/tcp_server ./09-bridge/lab10.sh   # 同一套脚本，逐行可比
+```
+
+两个对象**互不持有**，只认对方的 `std::function`：出方向 `CanSink`
+（server → `bridge->forward_local`），入方向 `handler`
+（bridge → `server.from_can`）。好处是没有循环引用、头文件互不包含、
+换桥接实现时 `server.cpp` 一行不改。
+
+类化之后要多守四条纪律（持锁不写 socket、持锁不调桥接、`from_can` 不回调、
+每个 client 一把写锁），关停必须**先 `bridge->stop()` 再 `server.stop()`** ——
+否则桥接的 rx 线程会去摸已经析构的 mutex。踩坑细节和一次真实的
+`terminate called without an active exception` 见 `09-bridge/NOTES.md` 第 9 节。
 
 ## 踩坑记录（都是这台机器上实测踩出来的）
 

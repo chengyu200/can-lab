@@ -39,7 +39,8 @@ BRIDGE := 09-bridge/can_bridge.o
 BRIDGE_ISOTP := 09-bridge/can_bridge_isotp.o
 
 CXXBINS := 09-bridge/tcp_server \
-           09-bridge/client
+           09-bridge/client \
+           09-bridge/v2/tcp_server
 
 all: $(BINS) $(CXXBINS)
 
@@ -113,6 +114,13 @@ $(BRIDGE_ISOTP): 09-bridge/can_bridge_isotp.cpp 09-bridge/can_bridge_isotp.h \
 
 09-bridge/client: 09-bridge/client.cpp 09-bridge/common.h
 	$(CXX) $(CXXFLAGS) -o $@ $< $(CXLIBS)
+
+# v2：tcp_server 包成类（TcpServer）+ 独立 main。跟 v1 用同一套桥接，
+# 所以能直接对比「flat 版」和「类化版」的行为是否一致。
+09-bridge/v2/tcp_server: 09-bridge/v2/main.cpp 09-bridge/v2/server.cpp 09-bridge/v2/server.h \
+                         $(BRIDGE) $(BRIDGE_ISOTP) $(ISOTP) 09-bridge/can_bridge.h 09-bridge/common.h
+	$(CXX) $(CXXFLAGS) -Iinclude -o $@ 09-bridge/v2/main.cpp 09-bridge/v2/server.cpp \
+	       $(BRIDGE) $(BRIDGE_ISOTP) $(ISOTP) $(CXLIBS)
 
 clean:
 	rm -f $(BINS) $(CXXBINS) $(PROTO) $(ISOTP) $(UDS) $(BRIDGE) $(BRIDGE_ISOTP)

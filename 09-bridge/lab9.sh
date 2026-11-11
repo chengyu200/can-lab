@@ -49,10 +49,10 @@ echo "端口: M1=$PORT_A  M2=$PORT_B"
 candump -td "$IF_A",500:7FF "$IF_B",500:7FF >"$CANLOG" 2>&1 &
 PIDS+=($!)
 
-"$CD/tcp_server" "$PORT_A" 1 "$IF_A" >>"$LOG" 2>&1 &
+"${SRV_BIN:-$CD/tcp_server}" "$PORT_A" 1 "$IF_A" >>"$LOG" 2>&1 &
 SRV+=($!)
 PIDS+=($!)
-"$CD/tcp_server" "$PORT_B" 2 "$IF_B" >>"$LOG" 2>&1 &
+"${SRV_BIN:-$CD/tcp_server}" "$PORT_B" 2 "$IF_B" >>"$LOG" 2>&1 &
 SRV+=($!)
 PIDS+=($!)
 sleep 0.8
